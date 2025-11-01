@@ -772,7 +772,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const keywordCount = selectedTabIds.filter(id => tabResultSources[id] === 'keyword').length;
         setStatus(`Found ${selectedTabIds.length} ${pluralize('tab', selectedTabIds.length)} (${aiCount} AI, ${keywordCount} keyword).`, 'success');
       } else if (hasKeyword) {
-        setStatus(`Found ${selectedTabIds.length} ${pluralize('tab', selectedTabIds.length)} from keyword search.`, 'success');
+        // Don't set final status yet - AI is still processing and will update the count
+        // Just show that we're working on it
+        setStatus(`Searching with AI...`, '');
       } else {
         setStatus(`Found ${selectedTabIds.length} ${pluralize('tab', selectedTabIds.length)}.`, 'success');
       }
@@ -1501,28 +1503,22 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
             // Store that we have AI results
             await chrome.storage.session.set({ aiResultsAdded: true, originalFallbackIds: fallbackIds });
             
-            chrome.tabs.query({}).then(tabs => {
+            chrome.tabs.query({}).then(async tabs => {
               renderResultsList(tabs, finalIds, true);
               // Update session with AI results
-              chrome.storage.session.get('aiSearchSession').then(({ aiSearchSession }) => {
-                if (aiSearchSession) {
-                  const updated = { ...aiSearchSession, tabIds: finalIds };
-                  chrome.storage.session.set({ aiSearchSession: updated });
-                }
-              });
-              
-              // Show status with AI result count
-              const aiCount = finalIds.length;
-              const removedCount = fallbackOnly.length;
-              
-              console.log('[AI-Replace] Setting status with AI result count');
-              
-              // Create status message
-              if (removedCount > 0) {
-                status.innerHTML = `AI refined results: ${aiCount} ${pluralize('tab', aiCount)} (removed ${removedCount} keyword-only ${pluralize('match', removedCount)}).`;
-              } else {
-                status.innerHTML = `Found ${aiCount} ${pluralize('tab', aiCount)} using AI.`;
+              const { aiSearchSession } = await chrome.storage.session.get('aiSearchSession');
+              if (aiSearchSession) {
+                const updated = { ...aiSearchSession, tabIds: finalIds };
+                await chrome.storage.session.set({ aiSearchSession: updated });
               }
+              
+              // Show status with AI result count - use actual finalIds count
+              const aiCount = finalIds.length;
+              
+              console.log('[AI-Replace] Setting status with final AI count:', aiCount);
+              
+              // Create status message - always show final count clearly
+              status.textContent = `Found ${aiCount} ${pluralize('tab', aiCount)}.`;
               status.className = 'success';
             });
           } else {
@@ -1891,41 +1887,16 @@ Score 6-10, return JSON: {"results": [{"id": number, "relevanceScore": number, "
       const userPrompt = [
         `Query: "${query}"`,
         ``,
-        `Extract keywords (ignore: "find", "tab", "about", "for me", etc.):`,
+        `RULES:`,
+        `1. ALL keywords must match (missing one = exclude)`,
+        `2. Check TAGS first - they show true topic`,
+        `3. "X for Y" = need both X AND Y context`,
+        `4. Semantic match ONLY if same category (ice-cream IS food ✓, NOT movies ✗)`,
+        `5. No hedging ("but", "however", "might") = exclude tab`,
+        `6. Score: 10=perfect, 8=good semantic, 6=weak, 4-5=loose`,
+        `7. Include score >= 4`,
         ``,
-        `CONTEXT DETECTION:`,
-        `- "X for Y" = X must be IN CONTEXT of Y (both needed)`,
-        `- "X and Y" = both X and Y needed separately`,
-        `- "X about Y" = X must be ABOUT Y topic`,
-        ``,
-        `SEMANTIC MATCHING:`,
-        `- Semantic match ONLY if query keyword belongs to same category as found word`,
-        `- "ice-cream" matches "food" (ice-cream IS food) ✓`,
-        `- "ice-cream" does NOT match "movies" (ice-cream is NOT movies) ✗`,
-        `- If query keyword not in same category → GIVE LOWER SCORE`,
-        ``,
-        `CRITICAL - ONLY RETURN CONFIDENT MATCHES:`,
-        `- If you're uncertain about a match, DO NOT include it in results`,
-        `- Do NOT use hedging words: "but", "however", "although", "might", "possibly", "not directly", "somewhat"`,
-        `- If context doesn't align with query, exclude the tab entirely (don't explain why it doesn't match)`,
-        `- Example BAD reason: "Keyword 'AI regulation' is in title, but context is about global AI law" → EXCLUDE this tab`,
-        `- Example GOOD reason: "Keywords 'AI regulation' in title and tags: 'ai, regulation, policy'"`,
-        ``,
-        `Examples:`,
-        `- "math for data science" → Need: math + data-science context (check tags!)`,
-        `- "email about medium" → Need: email + medium.com domain/tags or medium capitalized with an M`,
-        `- "github repos" → Need: github + repository content`,
-        `- "best food to try" → Can match "ice-cream" (ice-cream is food)`,
-        ``,
-        `SCORING (use TAGS as primary indicator):`,
-        `1. Check if ALL keywords present (literal OR semantic match)`,
-        `2. Check if context makes sense (tags align with query intent)`,
-        `3. Score 10=perfect literal match, 8=good semantic match, 6=weak match, 4-5=loose/partial match`,
-        `4. If uncertain or context misaligned → DO NOT INCLUDE (score 0)`,
-        `5. Include results with score >= 4 (we'll show lower scores if nothing better exists)`,
-        ``,
-        `FORMAT (show each keyword found):`,
-        `"Keywords: 'X' in title: '[text]', 'Y' in tags: 'tag1, tag2'" OR "Keyword 'X' semantically matched by 'Y' in title"`,
+        `FORMAT: "Keywords: 'X' in title: '[exact text]', 'Y' in tags: 'tag1'"`,
         ``,
         `Tabs:`,
         JSON.stringify(anonymousTabs, null, 2)
