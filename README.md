@@ -7,7 +7,7 @@ As a student, my biggest shame is that I can never seem to control my tabs. Firs
 ## What exactly is AI Tab Navigator?
 It is a Chrome extension that relies on Chrome's built-in AI APIs to help tab-hoaders around the world (who speak English) to search for tabs using natural language. Let's see it in action:
 
-[![Watch the demo video](https://youtu.be/ii7AqKQ0s34)
+![](https://youtu.be/ii7AqKQ0s34)
 
 
 ## What Problems does AI Tab Navigator solve?
