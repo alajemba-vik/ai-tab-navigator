@@ -61,7 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
   aggressiveSearchToggle.addEventListener('change', async (e) => {
     aggressiveSearchEnabled = e.target.checked;
     await chrome.storage.local.set({ aggressiveSearchEnabled });
-    console.log('[AggressiveSearch] Toggled:', aggressiveSearchEnabled);
   });
   
   // Load aggressive search preference
@@ -70,7 +69,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (aggressiveSearchToggle) {
       aggressiveSearchToggle.checked = aggressiveSearchEnabled;
     }
-    console.log('[AggressiveSearch] Loaded preference:', aggressiveSearchEnabled);
   });
   
   input.addEventListener('keypress', (e) => {
@@ -111,7 +109,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setBusy(isBusy, customMessage) {
-    console.debug('[setBusy] Setting busy state to:', isBusy, 'with message:', customMessage);
     searchButton.disabled = isBusy;
     input.disabled = isBusy;
     groupButton.disabled = isBusy ? true : groupButton.disabled;
@@ -119,7 +116,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Disable/enable history chips
     const historyChips = document.querySelectorAll('.history-chip');
-    console.debug('[setBusy] Found', historyChips.length, 'history chips to', isBusy ? 'disable' : 'enable');
     historyChips.forEach(chip => {
       if (isBusy) {
         chip.classList.add('disabled');
@@ -138,47 +134,30 @@ document.addEventListener('DOMContentLoaded', () => {
       searchStatus.style.display = 'block';
       searchStatus.style.visibility = 'visible';
       searchStatus.style.opacity = '1';
-      // Hide results status during search
       status.style.display = 'none';
-      console.debug('[setBusy] Search status element after setting:', {
-        textContent: searchStatus.textContent,
-        className: searchStatus.className,
-        display: searchStatus.style.display,
-        visibility: searchStatus.style.visibility,
-        opacity: searchStatus.style.opacity
-      });
     } else {
       searchButton.setAttribute('aria-label', 'Search tabs');
       searchButton.title = 'Search tabs';
       searchButton.classList.remove('searching');
       input.placeholder = 'search for a tab...';
-      // Don't clear searchStatus here - let showAIWaitingMessage/hideAIWaitingMessage control it
-      // This allows AI waiting messages to persist after setBusy(false)
-      // searchStatus.textContent = '';
-      // searchStatus.className = '';
-      // searchStatus.style.display = 'none';
-      // Show results status when search completes
       status.style.display = 'block';
       updateSearchIconState();
     }
   }
   
   function showAIWaitingMessage(message) {
-    console.debug('[showAIWaitingMessage] Showing message:', message);
     searchStatus.textContent = message;
     searchStatus.className = 'searching';
     searchStatus.style.display = 'block';
     searchStatus.style.visibility = 'visible';
     searchStatus.style.opacity = '1';
-    setAIStatus('active'); // Green - AI is actively processing
+    setAIStatus('active');
   }
   
   function hideAIWaitingMessage() {
-    console.debug('[hideAIWaitingMessage] Hiding AI waiting message');
     searchStatus.textContent = '';
     searchStatus.className = '';
     searchStatus.style.display = 'none';
-    // Set back to available (orange) when done processing
     if (aiAvailable) {
       setAIStatus('available');
     }
@@ -247,17 +226,10 @@ document.addEventListener('DOMContentLoaded', () => {
   
 
   async function startBackgroundSummarization() {
-    if (isBackgroundSummarizing) {
-      console.debug('[Background] Already summarizing, skipping');
-      return;
-    }
+    if (isBackgroundSummarizing) return;
     
-    // Don't start background work if user is actively searching
     const { isSearching } = await chrome.storage.session.get('isSearching');
-    if (isSearching) {
-      console.debug('[Background] User is searching, deferring background work');
-      return;
-    }
+    if (isSearching) return;
     
     try {
       isBackgroundSummarizing = true;
@@ -280,8 +252,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const tabId = parseInt(key);
         if (currentTabIds.has(tabId) && (now - summary.timestamp) < maxAgeMs) {
           cleanedSummaries[key] = summary;
-        } else {
-          console.debug('[Background] Removing stale summary for tab', tabId);
         }
       }
       
@@ -314,14 +284,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!toSummarize.length) {
         const totalProcessed = alreadyProcessed.length;
         const totalTabs = tabs.filter(t => isScriptableUrl(t.url)).length;
-        console.debug('[Background] All tabs already summarized');
         if (await canUpdateStatus()) {
           setBackgroundStatus(`Read ${totalProcessed} out of ${totalTabs} tabs`);
         }
         return;
       }
       
-      console.debug('[Background] Summarizing', toSummarize.length, 'tabs');
       await summarizeTabsWithProgress(toSummarize, alreadyProcessed.length);
       
       const totalProcessed = alreadyProcessed.length + toSummarize.length;
@@ -377,17 +345,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function checkAIAvailability() {
     try {
-      console.log('[AI-STATUS] Testing AI availability...');
-      
-      // Show checking state
       showAICheckingNotice();
       
-      // Test using the same method as the actual session creation
       const testSystemPrompt = 'Test prompt for availability check.';
       const testSession = await createOnDeviceSession(testSystemPrompt);
       
       if (testSession && testSession.session) {
-        // Clean up test session
         try {
           if (testSession.type === 'LanguageModel' && testSession.session.destroy) {
             testSession.session.destroy();
@@ -397,9 +360,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         aiAvailable = true;
-        setAIStatus('available'); // Orange - ready but not in use
+        setAIStatus('available');
         hideAIStatusNotice();
-        console.log('[AI-STATUS] AI features are available and working');
         return;
       }
     } catch (e) {
@@ -407,12 +369,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     aiAvailable = false;
-    setAIStatus('unavailable'); // Red - not working
-    // Only show notice after user has completed onboarding
+    setAIStatus('unavailable');
     const { onboardingCompleted = false } = await chrome.storage.local.get('onboardingCompleted');
     if (onboardingCompleted) {
       showAIStatusNotice();
-      console.log('[AI-STATUS] AI features unavailable, showing fallback notice');
     }
   }
 
@@ -456,7 +416,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (await canUpdateStatus()) {
         setBackgroundStatus(`Reading tabs ${currentProgress}-${alreadyProcessedCount + batchEnd} (${progress})`);
       }
-      console.debug('[Background] Processing batch:', batchStart + 1, '-', batchEnd);
       
       try {
         // Extract text from all tabs in batch (parallel)
@@ -474,11 +433,9 @@ document.addEventListener('DOMContentLoaded', () => {
               timestamp: now,
               tabId: summary.id
             };
-            console.debug('[Background] Summarized tab', summary.id, ':', summary.summary.substring(0, 50), 'tags:', summary.tags);
           }
         }
       } catch (e) {
-        console.debug('[Background] Failed to summarize batch:', e.message);
         // Store fallback summaries for failed batch
         for (const tab of batch) {
           const fallbackSummary = `${tab.title || ''} ${tab.url || ''}`.trim() || tab.url || '';
@@ -687,57 +644,36 @@ document.addEventListener('DOMContentLoaded', () => {
       let searchMessage;
       if (hashtagInfo.isHashtagSearch) {
         searchMessage = `Searching tags: ${hashtagInfo.tags.map(t => '#' + t).join(', ')}...`;
-        console.debug('[Search] Mode: hashtag');
       } else {
         searchMessage = 'AI is analyzing your tabs...';
-        console.debug('[Search] Mode: normal AI');
       }
       setBusy(true, searchMessage);
       
-      // Explicitly ensure status is visible during search
       status.style.display = 'block';
       status.style.visibility = 'visible';
       status.style.opacity = '1';
     }
     
-    // Save searching state so we can restore it if popup closes
     await chrome.storage.session.set({ isSearching: { query, timestamp: Date.now() } });
 
     try {
       const tabs = await chrome.tabs.query({});
-      console.debug('[Search] Total tabs:', tabs.length);
       if (!tabs.length) {
         setStatus('No open tabs found.', 'error');
         return;
       }
       
-      // Check if search was aborted
-      if (searchSignal.aborted) {
-        console.debug('[Search] Search aborted before processing');
-        return;
-      }
+      if (searchSignal.aborted) return;
 
-      // Use pre-built summaries - much faster!
       const summaries = await getExistingSummaries(tabs);
-      console.debug('[Search] Using existing summaries for', summaries.length, 'tabs');
 
-      // Check if search was aborted
-      if (searchSignal.aborted) {
-        console.debug('[Search] Search aborted after getting summaries');
-        return;
-      }
+      if (searchSignal.aborted) return;
 
-      // 2) Select relevant tab IDs based on summaries
       const selectedTabIds = await selectFromSummariesWithAIOrFallback(summaries, query, searchSignal);
-      console.info('[Search] Selected tab IDs:', selectedTabIds);
       
-      // Check if search was aborted
-      if (searchSignal.aborted) {
-        console.debug('[Search] Search aborted after selection');
-        return;
-      }
+      if (searchSignal.aborted) return;
 
-      // 3) Log search history (daily) and update display
+      // 3) Log search history and update display
       await logSearchHistory(query, selectedTabIds);
       await loadHistory();
       renderHistory();
@@ -1244,7 +1180,6 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
         
         // Check if aborted
         if (signal?.aborted) {
-          console.log('[AggressiveSearch] Search aborted at tab', i + 1);
           setStatus(`Search aborted. Found ${results.length} tabs (searched ${i + 1}/${tabs.length})`, 'success');
           break;
         }
@@ -1297,7 +1232,6 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
           const reason = `Matched "${matchedWords.join('", "')}" in ${[...new Set(matchedIn)].join(', ')}`;
           reasonsMap[tab.id] = reason;
           scoresMap[tab.id] = score;
-          console.log('[AggressiveSearch] Tab', i + 1, '- Quick match (score:', score + '):', tab.title);
           
           // Update UI immediately with current results (progressive/streaming)
           await chrome.storage.session.set({
@@ -1321,7 +1255,6 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
         
         // If no quick match, extract full text and check content
         if (isScriptableUrl(tab.url)) {
-          console.log('[AggressiveSearch] Tab', i + 1, '- Extracting full text:', tab.title);
           setStatus(`Aggressive search: ${i + 1}/${tabs.length} tabs | Scanning: "${tab.title.substring(0, 30)}..."`, '');
           
           const fullTextResult = await extractFullPageText([tab]);
