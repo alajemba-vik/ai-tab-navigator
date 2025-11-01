@@ -39,16 +39,15 @@ Sometimes, what we need is a tool that accepts our chaos just rolls with it.
 
 ### 📊 **Smart Result Management**
 - See exactly WHY each tab matches your search (with quoted evidence)
-- Click to reorder results by AI relevance score
-- Group matching tabs instantly by window
+- Automatically create groups for all matching tabs with a single click
 
 ### 📜 **Search History**
 - Automatically saves your last 5 searches
-- Click any history chip to re-run that search
+- Click any recent search to re-run that search
 - Never lose track of what you were looking for
 
 ### 🎯 **Tab Summaries On Demand**
-- Hover over any tab to see an AI-generated summary
+- View AI-generated summaries of your tabs
 - Understand what's on a tab without opening it
 - Perfect for deciding which tabs to keep or close
 
@@ -66,12 +65,12 @@ This ensures the AI never makes up matches - it must prove every result with quo
 ## For My Fellow Students
 
 If you're a student who:
-- Has 100+ tabs open right now
+- Has 30+ tabs open right now
 - Promises yourself you'll "organize them later"
 - Loses important research tabs in the sea of YouTube videos or tutorial articles 
 - Has separate browser windows for each class/project that somehow all bleed together
 
-Then this is for you. Welcome to the tab-hoarder support group. We don't close tabs here, we just look for ways to find them faster. 😎
+Then this is for you. Welcome to the tab-hoarder support group. We don't close tabs here, we just look for ways to find them. 😎
 
 ---
 
