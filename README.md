@@ -32,8 +32,8 @@ Sometimes, what we need is a tool that accepts our chaos just rolls with it.
 - Analyzes tab content to understand what each page is actually about
 - Ranks results by true relevance, not just word matching
 
-### ⚡ **Lightning-Fast Hybrid Search**
-- Keyword search returns instant results
+### ⚡ **Hybrid Search**
+- Keyword search returns quick results
 - AI enhancement adds better matches in the background
 - Best of both worlds: speed + intelligence
 
