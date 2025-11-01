@@ -5,7 +5,7 @@
 As a student, my biggest shame is that I can never seem to control my tabs. First, I start off with one tab in a clean blank window...zen..but then it easily fills up with 2, 3, 4 and many more tabs than i can count. When I realized that I had officially become a **tab-whore-der**, it was crucial that I seek solutions before I drown in this chaos. Instead of closing my tabs like a sane person would, I decided to create AI tab navigator.
 
 ## What exactly is AI Tab Navigator?
-It is a Chrome extension that relies on Chrome's built-in AI  APIs to help tab-hoaders around the world (who speak English) to search for tabs using natural language. Let's see it in action:
+It is a Chrome extension that relies on Chrome's built-in AI APIs to help tab-hoaders around the world (who speak English) to search for tabs using natural language. Let's see it in action:
 
 [![Watch the demo video](<WIP>)
 

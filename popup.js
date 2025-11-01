@@ -1,3 +1,15 @@
+/**
+ * AI Tab Navigator - Smart Tab Search Extension
+ * 
+ * Features:
+ * - Natural Language Search: Handles full sentences like "I am looking for a tab about JavaScript"
+ * - Keyword Extraction: Automatically filters out filler words (I, am, looking, for, a, tab, about, etc.)
+ * - AI-Powered Matching: Uses on-device AI for intelligent tab relevance scoring
+ * - Aggressive Search: Deep content scanning for precise matches
+ * - Hashtag Search: Fast tag-based filtering with #hashtags
+ * - Keyword Fallback: Traditional keyword search when AI is unavailable
+ */
+
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('queryInput');
   const searchButton = document.getElementById('searchButton');
@@ -13,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const showMoreContainer = document.getElementById('showMoreContainer');
   const showMoreButton = document.getElementById('showMoreButton');
   const aggressiveSearchToggle = document.getElementById('aggressiveSearchToggle');
+  const aiOnlyToggle = document.getElementById('aiOnlyToggle');
 
   // Onboarding elements
   const onboardingOverlay = document.getElementById('onboardingOverlay');
@@ -48,8 +61,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // AI availability state
   let aiAvailable = null; // null = unknown, true = available, false = unavailable
   
-  // Aggressive search state
+  // Search mode toggles state (mutually exclusive)
   let aggressiveSearchEnabled = false;
+  let aiOnlyEnabled = false;
 
   searchButton.addEventListener('click', () => handleSearch({ groupAfter: false }));
   groupButton.addEventListener('click', handleGroupTabs);
@@ -57,17 +71,46 @@ document.addEventListener('DOMContentLoaded', () => {
   closeAllSummariesBtn.addEventListener('click', closeAllSummaries);
   showMoreButton.addEventListener('click', showMoreResults);
   
-  // Aggressive search toggle
+  // Aggressive search toggle (mutually exclusive with AI Only)
   aggressiveSearchToggle.addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      // Turn off AI Only when enabling Aggressive
+      aiOnlyEnabled = false;
+      aiOnlyToggle.checked = false;
+      await chrome.storage.local.set({ aiOnlyEnabled: false });
+    }
     aggressiveSearchEnabled = e.target.checked;
-    await chrome.storage.local.set({ aggressiveSearchEnabled });
+    await chrome.storage.local.set({ aggressiveSearchEnabled: e.target.checked });
   });
   
-  // Load aggressive search preference
-  chrome.storage.local.get(['aggressiveSearchEnabled']).then(({ aggressiveSearchEnabled: saved }) => {
-    aggressiveSearchEnabled = saved || false;
+  // AI Only toggle (mutually exclusive with Aggressive)
+  aiOnlyToggle.addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      // Turn off Aggressive when enabling AI Only
+      aggressiveSearchEnabled = false;
+      aggressiveSearchToggle.checked = false;
+      await chrome.storage.local.set({ aggressiveSearchEnabled: false });
+    }
+    aiOnlyEnabled = e.target.checked;
+    await chrome.storage.local.set({ aiOnlyEnabled: e.target.checked });
+  });
+  
+  // Load search mode preferences
+  chrome.storage.local.get(['aggressiveSearchEnabled', 'aiOnlyEnabled']).then(({ aggressiveSearchEnabled: savedAggressive, aiOnlyEnabled: savedAiOnly }) => {
+    aggressiveSearchEnabled = savedAggressive || false;
+    aiOnlyEnabled = savedAiOnly || false;
+    
+    // Ensure mutual exclusivity on load (Aggressive takes priority if both somehow saved)
+    if (aggressiveSearchEnabled && aiOnlyEnabled) {
+      aiOnlyEnabled = false;
+      chrome.storage.local.set({ aiOnlyEnabled: false });
+    }
+    
     if (aggressiveSearchToggle) {
       aggressiveSearchToggle.checked = aggressiveSearchEnabled;
+    }
+    if (aiOnlyToggle) {
+      aiOnlyToggle.checked = aiOnlyEnabled;
     }
   });
   
@@ -409,12 +452,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     for (let batchStart = 0; batchStart < tabs.length; batchStart += BATCH_SIZE) {
       const batch = tabs.slice(batchStart, batchStart + BATCH_SIZE);
-      const currentProgress = alreadyProcessedCount + batchStart + 1;
       const batchEnd = Math.min(batchStart + BATCH_SIZE, tabs.length);
-      const progress = `${alreadyProcessedCount + batchEnd}/${totalTabs}`;
+      const currentTotal = alreadyProcessedCount + batchEnd;
       
       if (await canUpdateStatus()) {
-        setBackgroundStatus(`Reading tabs ${currentProgress}-${alreadyProcessedCount + batchEnd} (${progress})`);
+        setBackgroundStatus(`Reading tabs (${currentTotal}/${totalTabs})`);
       }
       
       try {
@@ -663,9 +705,21 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       
+      // Filter out chrome:// URLs unless user explicitly searches for them
+      const queryLower = query.toLowerCase();
+      const searchingForChromePages = queryLower.includes('extension') || queryLower.includes('chrome://');
+      const filteredTabs = searchingForChromePages 
+        ? tabs 
+        : tabs.filter(tab => !tab.url || !tab.url.startsWith('chrome://'));
+      
+      if (!filteredTabs.length) {
+        setStatus('No matching tabs found.', 'error');
+        return;
+      }
+      
       if (searchSignal.aborted) return;
 
-      const summaries = await getExistingSummaries(tabs);
+      const summaries = await getExistingSummaries(filteredTabs);
 
       if (searchSignal.aborted) return;
 
@@ -692,7 +746,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Display results list - preserve AI order for relevance
-      renderResultsList(tabs, selectedTabIds, true);
+      renderResultsList(filteredTabs, selectedTabIds, true);
 
       // For new searches, start at the top
       savedScrollPosition = 0;
@@ -1158,9 +1212,13 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
     if (aggressiveSearchEnabled) {
       console.log('[AggressiveSearch] Aggressive mode enabled - using sequential tab-by-tab search with progressive results');
       
+      // Extract meaningful keywords from the query
+      const keywords = extractKeywords(query);
       const q = query.toLowerCase();
-      const words = q.split(/\s+/).filter(Boolean);
+      const words = keywords; // Use extracted keywords instead of all words
       const minScore = Math.max(words.length * 2, 4);
+      
+      console.log('[AggressiveSearch] Using keywords:', keywords);
       
       const results = [];
       const reasonsMap = {};
@@ -1332,16 +1390,41 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
     // Normal flow with AI
     // Show AI waiting message immediately while AI processes
     const aiMessages = [
-      'Still waiting for AI to finalize results...',
-      'AI is analyzing your tabs...',
-      'Enhancing results with AI scoring...',
-      'AI is refining the search...',
-      'Waiting for AI relevance analysis...'
+      'AI is finding the most relevant tabs...',
+      'Analyzing tab content with AI...',
+      'AI is scoring tab relevance...',
+      'Matching your query with AI...',
+      'AI is searching through your tabs...'
     ];
     const randomMessage = aiMessages[Math.floor(Math.random() * aiMessages.length)];
     showAIWaitingMessage(randomMessage);
     
-    // Start both searches in parallel for faster results
+    // Check if AI Only mode is enabled
+    if (aiOnlyEnabled) {
+      console.log('[Search] AI Only mode enabled - skipping fallback search');
+      // Only use AI, no fallback
+      const idsFromAI = await tryOnDeviceSelectFromSummaries(summaries, query, signal);
+      hideAIWaitingMessage();
+      
+      if (idsFromAI && idsFromAI.length) {
+        console.debug('[Search] AI Only returned', idsFromAI.length, 'tab IDs');
+        hideAIStatusNotice();
+        
+        // Mark all AI results as 'ai' source
+        const resultSources = {};
+        idsFromAI.forEach(id => { resultSources[id] = 'ai'; });
+        await chrome.storage.session.set({ tabResultSources: resultSources });
+        
+        return idsFromAI;
+      }
+      
+      // AI failed and AI Only mode is on - return empty (no fallback)
+      console.debug('[Search] AI Only mode: No results from AI, not using fallback');
+      return [];
+    }
+    
+    // Normal mode: Start both searches in parallel for faster results
+
     const fallbackPromise = performFallbackSearch(summaries, query);
     const aiPromise = tryOnDeviceSelectFromSummaries(summaries, query, signal);
     
@@ -1378,11 +1461,11 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
           hideAIWaitingMessage(); // Hide AI waiting message
           
           // Detailed logging of AI vs fallback comparison
-          console.log('[AI-Merge] === Merging AI results with fallback results ===');
-          console.log('[AI-Merge] AI results:', idsFromAI);
-          console.log('[AI-Merge] Fallback results:', fallbackIds);
+          console.log('[AI-Replace] === Replacing fallback results with AI results ===');
+          console.log('[AI-Replace] AI results:', idsFromAI);
+          console.log('[AI-Replace] Fallback results (will be replaced):', fallbackIds);
           
-          // Find duplicates and new additions
+          // Find which tabs are in both results
           const aiSet = new Set(idsFromAI);
           const fallbackSet = new Set(fallbackIds);
           
@@ -1390,90 +1473,63 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
           const aiOnly = idsFromAI.filter(id => !fallbackSet.has(id));
           const fallbackOnly = fallbackIds.filter(id => !aiSet.has(id));
           
-          console.log('[AI-Merge] Tabs in both AI and fallback (duplicates):', duplicates.length, duplicates);
-          console.log('[AI-Merge] Tabs only in AI results (new additions):', aiOnly.length, aiOnly);
-          console.log('[AI-Merge] Tabs only in fallback results:', fallbackOnly.length, fallbackOnly);
+          console.log('[AI-Replace] Tabs in both (AI replaces keyword version):', duplicates.length, duplicates);
+          console.log('[AI-Replace] Tabs only in AI results (new additions):', aiOnly.length, aiOnly);
+          console.log('[AI-Replace] Tabs only in fallback (will be removed):', fallbackOnly.length, fallbackOnly);
           
-          // Get all scores to sort properly
+          // REPLACEMENT STRATEGY: Use ONLY AI results, discard fallback-only tabs
+          // This ensures AI scoring and reasoning completely replaces keyword matching
+          const finalIds = idsFromAI; // Only keep AI results
+          
+          console.log('[AI-Replace] Final result: Using AI results only');
+          console.log('[AI-Replace] Previous count:', fallbackIds.length, '→ New count:', finalIds.length);
+          console.log('[AI-Replace] Removed', fallbackOnly.length, 'keyword-only results');
+          
+          // Get AI scores for sorting
           const { tabSelectionScores = {} } = await chrome.storage.session.get('tabSelectionScores');
+          console.log('[AI-Replace] Top 5 AI scores:', finalIds.slice(0, 5).map(id => `ID=${id} Score=${tabSelectionScores[id]}`));
           
-          // Merge all unique IDs and sort by score (highest first)
-          const allIds = [...new Set([...idsFromAI, ...fallbackIds])];
-          const mergedIds = allIds.sort((a, b) => {
-            const scoreA = tabSelectionScores[a] || 0;
-            const scoreB = tabSelectionScores[b] || 0;
-            return scoreB - scoreA; // Descending order (highest score first)
-          });
-          
-          console.log('[AI-Merge] Sorted merged list by score:', mergedIds.length, 'tabs');
-          console.log('[AI-Merge] Top 5 scores:', mergedIds.slice(0, 5).map(id => `ID=${id} Score=${tabSelectionScores[id]}`));
-          console.log('[AI-Merge] Order: AI results first, then fallback-only results appended');
-          
-          // Update result sources: AI tabs marked as 'ai', fallback-only remain 'keyword'
+          // Mark ALL results as 'ai' source (no keyword results remain)
           const updatedSources = {};
-          idsFromAI.forEach(id => { updatedSources[id] = 'ai'; });
-          fallbackOnly.forEach(id => { updatedSources[id] = 'keyword'; });
+          finalIds.forEach(id => { updatedSources[id] = 'ai'; });
           await chrome.storage.session.set({ tabResultSources: updatedSources });
           
-          // Update UI with enhanced results if different from initial fallback
-          if (mergedIds.length !== fallbackIds.length || !mergedIds.every((id, i) => id === fallbackIds[i])) {
-            console.log('[AI-Merge] Results changed - updating UI');
-            console.log('[AI-Merge] Previous count:', fallbackIds.length, '→ New count:', mergedIds.length);
+          // Update UI with AI results only
+          if (finalIds.length !== fallbackIds.length || !finalIds.every((id, i) => id === fallbackIds[i])) {
+            console.log('[AI-Replace] Updating UI with AI-only results');
             
-            // Store that we have new AI results for reordering
+            // Store that we have AI results
             await chrome.storage.session.set({ aiResultsAdded: true, originalFallbackIds: fallbackIds });
             
             chrome.tabs.query({}).then(tabs => {
-              renderResultsList(tabs, mergedIds, true);
-              // Update session with merged results
+              renderResultsList(tabs, finalIds, true);
+              // Update session with AI results
               chrome.storage.session.get('aiSearchSession').then(({ aiSearchSession }) => {
                 if (aiSearchSession) {
-                  const updated = { ...aiSearchSession, tabIds: mergedIds };
+                  const updated = { ...aiSearchSession, tabIds: finalIds };
                   chrome.storage.session.set({ aiSearchSession: updated });
                 }
               });
               
-              // Show clickable status to reorder by AI relevance
-              const aiCount = idsFromAI.length;
-              const keywordCount = fallbackOnly.length;
-              const addedCount = aiOnly.length;
+              // Show status with AI result count
+              const aiCount = finalIds.length;
+              const removedCount = fallbackOnly.length;
               
-              console.log('[AI-Merge] Setting clickable reorder status');
+              console.log('[AI-Replace] Setting status with AI result count');
               
-              // Create clickable status message
-              status.innerHTML = `AI data added: ${addedCount} new ${pluralize('tab', addedCount)}. <span style="text-decoration: underline; cursor: pointer;" id="reorderByAI">Click to reorder by AI relevance</span>.`;
-              status.className = 'success';
-              
-              // Add click handler for reordering
-              const reorderLink = document.getElementById('reorderByAI');
-              if (reorderLink) {
-                reorderLink.addEventListener('click', async () => {
-                  console.log('[AI-Merge] User clicked reorder - sorting all results by score');
-                  
-                  // Get current scores and sort by them
-                  const { tabSelectionScores = {} } = await chrome.storage.session.get('tabSelectionScores');
-                  const sortedIds = mergedIds.slice().sort((a, b) => {
-                    const scoreA = tabSelectionScores[a] || 0;
-                    const scoreB = tabSelectionScores[b] || 0;
-                    return scoreB - scoreA; // Descending order
-                  });
-                  
-                  console.log('[AI-Merge] Reordered by score. Top 5:', sortedIds.slice(0, 5).map(id => `ID=${id} Score=${tabSelectionScores[id]}`));
-                  
-                  chrome.tabs.query({}).then(tabs => {
-                    renderResultsList(tabs, sortedIds, true);
-                    setStatus(`Found ${sortedIds.length} ${pluralize('tab', sortedIds.length)}.`, 'success');
-                    // Clear the reorder flag
-                    chrome.storage.session.remove('aiResultsAdded');
-                  });
-                });
+              // Create status message
+              if (removedCount > 0) {
+                status.innerHTML = `AI refined results: ${aiCount} ${pluralize('tab', aiCount)} (removed ${removedCount} keyword-only ${pluralize('match', removedCount)}).`;
+              } else {
+                status.innerHTML = `Found ${aiCount} ${pluralize('tab', aiCount)} using AI.`;
               }
+              status.className = 'success';
             });
           } else {
-            console.log('[AI-Merge] Results identical - no UI update needed');
-            // Same tabs, just hide the waiting message
+            console.log('[AI-Replace] Results identical - no UI update needed');
+            // Same tabs, just update the status message
             hideAIWaitingMessage();
-            setStatus(`Found ${mergedIds.length} ${pluralize('tab', mergedIds.length)}.`, 'success');
+            setStatus(`Found ${finalIds.length} ${pluralize('tab', finalIds.length)}.`, 'success');
           }
         } else {
           // AI failed or returned no results
@@ -1581,9 +1637,59 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
     return results;
   }
   
+  // Extract meaningful keywords from natural language queries
+  function extractKeywords(query) {
+    // Common filler words/phrases to ignore when extracting keywords
+    // Since this is a tab search tool, users often say "looking for tab about X" or "tab is about Y"
+    // We want to keep the actual topic (X, Y) but remove the search-related filler
+    const stopWords = new Set([
+      // Personal pronouns and articles
+      'i', 'me', 'my', 'your', 'a', 'an', 'the',
+      // Tab search context (users say this because it's a tab tool)
+      'tab', 'tabs', 'looking', 'find', 'search', 'show', 'open',
+      // Prepositions that don't add meaning
+      'for', 'about', 'in', 'on', 'at', 'to', 'from', 'with', 'of',
+      // Conjunctions
+      'and', 'or', 'but',
+      // Demonstratives
+      'this', 'that', 'these', 'those',
+      // Common verbs that are just filler
+      'is', 'are', 'was', 'were', 'be', 'been', 'being',
+      'have', 'has', 'had', 'do', 'does', 'did',
+      'will', 'would', 'should', 'could', 'may', 'might', 'can',
+      'want', 'need', 'am', 'try', 'get', 'go', 'see',
+      // Vague qualifiers
+      'related', 'some', 'any', 'all', 'where'
+    ]);
+    
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    
+    // Filter out stop words and keep meaningful keywords
+    const keywords = words.filter(word => {
+      // Keep words that are:
+      // - Not stop words
+      // - Longer than 2 characters (keeps meaningful short words like "git", "npm", "api")
+      return !stopWords.has(word) && word.length > 2;
+    });
+    
+    // If no keywords found (query was all stop words), return original words
+    // This handles edge cases like "ai" or "ml" where the query IS the stop word
+    if (keywords.length === 0) {
+      console.log('[KeywordExtract] No keywords found after filtering, using all words');
+      return words;
+    }
+    
+    console.log('[KeywordExtract] Original query:', query);
+    console.log('[KeywordExtract] Extracted keywords:', keywords);
+    
+    return keywords;
+  }
+  
   async function performFallbackSearch(summaries, query, fullTextData = null) {
+    // Extract meaningful keywords from the query
+    const keywords = extractKeywords(query);
     const q = query.toLowerCase();
-    const words = q.split(/\s+/).filter(Boolean);
+    const words = keywords; // Use extracted keywords instead of all words
     
     // If aggressive search is enabled and we have full text data, use it
     const isAggressive = fullTextData !== null;
@@ -1715,7 +1821,20 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
     console.log('[AI-SELECTION] Starting AI tab selection with relevance scoring');
     
     try {
-      const systemPrompt = `You are a tab relevance scorer. Score tabs 1-10 based on query match. CRITICAL: In "reason", you MUST quote actual text from the tab's title/summary/tags/URL that contains the query keywords. Never describe or paraphrase - quote the exact text. Only return tabs scoring 6+. Output: {"results": [{"id": number, "relevanceScore": number, "reason": string}]}`;
+      const systemPrompt = `Tab relevance scorer. Find tabs matching ALL query keywords in context.
+
+RULES:
+1. ALL keywords must be found in the tab (missing one = exclude)
+2. Check TAGS first - they show the page's true topic
+3. Context matters: "X for Y" means X in context of Y (e.g., "math for data science" needs both math AND data science context)
+
+FORMAT: "Keywords: 'X' in [location]: '[text]', 'Y' in [location]: '[text]'"
+
+EXAMPLE: Query "math for data science"
+✅ MATCH: Tab with tags: 'mathematics, data-science, statistics' 
+❌ NO MATCH: Tab with only 'mathematics' tag (missing data science context)
+
+Score 6-10, return JSON: {"results": [{"id": number, "relevanceScore": number, "reason": string}]}`;
       
       const sessionObj = await getOnDeviceSession('select_scored', systemPrompt);
       if (!sessionObj) {
@@ -1730,15 +1849,26 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
         return [];
       }
       
-      // Include tab IDs for reference only - AI must NOT use IDs in matching logic
-      const anonymousTabs = summaries.map((s) => ({ 
-        id: s.id, // Browser tab ID - for reference ONLY, not for matching
-        title: s.title || 'Untitled', 
+      // Include a stable string reference for each tab so AI doesn't confuse numeric IDs.
+      // AI should refer to tabs by the 'ref' field (tab1, tab2, ...). We'll map refs back to real IDs.
+      const anonymousTabs = summaries.map((s, idx) => ({
+        ref: `tab${idx + 1}`,
+        id: s.id, // real browser tab id (for internal mapping)
+        title: s.title || 'Untitled',
         summary: s.summary || 'No summary',
         tags: s.tags || [],
         url: s.url || ''
       }));
+
+      // Build a quick lookup from ref -> tab data and ref -> real id
+      const refToTab = new Map();
+      const refToId = new Map();
+      anonymousTabs.forEach(tab => {
+        refToTab.set(tab.ref, tab);
+        refToId.set(tab.ref, tab.id);
+      });
       
+      // Schema: AI must return 'ref' (string like 'tab1'), relevanceScore and reason
       const schema = {
         type: 'object',
         properties: {
@@ -1747,11 +1877,11 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
             items: {
               type: 'object',
               properties: {
-                id: { type: 'number', description: 'The tab ID from the provided list' },
+                ref: { type: 'string', description: "The tab ref from the provided list (e.g. 'tab1')" },
                 relevanceScore: { type: 'number', description: 'Score from 1-10, only include if >= 6' },
                 reason: { type: 'string', description: 'MUST quote exact text from title/summary/tags/URL containing query keywords' }
               },
-              required: ['id', 'relevanceScore', 'reason']
+              required: ['ref', 'relevanceScore', 'reason']
             }
           }
         },
@@ -1761,27 +1891,44 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
       const userPrompt = [
         `Query: "${query}"`,
         ``,
-        `Score tabs 1-10 for relevance. Only include scores ≥6.`,
+        `Extract keywords (ignore: "find", "tab", "about", "for me", etc.):`,
         ``,
-        `3-STAGE VERIFICATION (mandatory for each tab):`,
-        `1. Does tab relate to "${query}"? If no → exclude`,
-        `2. WHY? State the specific text you see: "I see '[TEXT]' in the [title/summary/tags/url]"`,
-        `3. PROVE IT: Copy-paste that exact text into your reason. Format: "Title: '[EXACT TEXT]' contains '${query}'"`,
+        `CONTEXT DETECTION:`,
+        `- "X for Y" = X must be IN CONTEXT of Y (both needed)`,
+        `- "X and Y" = both X and Y needed separately`,
+        `- "X about Y" = X must be ABOUT Y topic`,
         ``,
-        `If you cannot copy-paste actual text from the data as proof → exclude that tab.`,
+        `SEMANTIC MATCHING:`,
+        `- Semantic match ONLY if query keyword belongs to same category as found word`,
+        `- "ice-cream" matches "food" (ice-cream IS food) ✓`,
+        `- "ice-cream" does NOT match "movies" (ice-cream is NOT movies) ✗`,
+        `- If query keyword not in same category → GIVE LOWER SCORE`,
         ``,
-        `CORRECT: "Title: 'Brain Research Lab' contains 'Brain'"`,
-        `WRONG: "About brain research" (not quoted!)`,
-        `WRONG: "Query appears in title" (where? show me!)`,
+        `CRITICAL - ONLY RETURN CONFIDENT MATCHES:`,
+        `- If you're uncertain about a match, DO NOT include it in results`,
+        `- Do NOT use hedging words: "but", "however", "although", "might", "possibly", "not directly", "somewhat"`,
+        `- If context doesn't align with query, exclude the tab entirely (don't explain why it doesn't match)`,
+        `- Example BAD reason: "Keyword 'AI regulation' is in title, but context is about global AI law" → EXCLUDE this tab`,
+        `- Example GOOD reason: "Keywords 'AI regulation' in title and tags: 'ai, regulation, policy'"`,
         ``,
-        `Scoring: 10=exact match in title, 8=variant/summary, 6=related concept`,
+        `Examples:`,
+        `- "math for data science" → Need: math + data-science context (check tags!)`,
+        `- "email about medium" → Need: email + medium.com domain/tags or medium capitalized with an M`,
+        `- "github repos" → Need: github + repository content`,
+        `- "best food to try" → Can match "ice-cream" (ice-cream is food)`,
         ``,
-        `Better to return 0 results than 1 unproven result. Accuracy > quantity.`,
+        `SCORING (use TAGS as primary indicator):`,
+        `1. Check if ALL keywords present (literal OR semantic match)`,
+        `2. Check if context makes sense (tags align with query intent)`,
+        `3. Score 10=perfect literal match, 8=good semantic match, 6=weak match, 4-5=loose/partial match`,
+        `4. If uncertain or context misaligned → DO NOT INCLUDE (score 0)`,
+        `5. Include results with score >= 4 (we'll show lower scores if nothing better exists)`,
+        ``,
+        `FORMAT (show each keyword found):`,
+        `"Keywords: 'X' in title: '[text]', 'Y' in tags: 'tag1, tag2'" OR "Keyword 'X' semantically matched by 'Y' in title"`,
         ``,
         `Tabs:`,
-        JSON.stringify(anonymousTabs, null, 2),
-        ``,
-        `Complete all 3 stages for each tab. Only include results you can prove with quoted text.`
+        JSON.stringify(anonymousTabs, null, 2)
       ].join('\n');
 
       console.log('[AI-SELECTION] Sending scoring request to AI...');
@@ -1801,21 +1948,209 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
       
       let parsed = safeJsonParse(raw);
       if (parsed?.results && Array.isArray(parsed.results)) {
-        const validResults = parsed.results
-          .filter(r => 
-            Number.isFinite(r.id) &&
-            r.id > 0 &&
-            Number.isFinite(r.relevanceScore) &&
-            r.relevanceScore >= 6 && // Minimum score raised to 6
-            r.reason && typeof r.reason === 'string' // Ensure reason exists
-          )
+        // Extract keywords from query to validate AI actually found them
+        const queryKeywords = extractKeywords(query);
+        console.log('[AI-VALIDATION] Checking if AI found all keywords:', queryKeywords);
+        
+        // Create a map of tab refs to tab data for validation (ref = 'tab1', 'tab2', ...)
+        // We already built refToTab and refToId above.
+        
+        // First pass: try with score >= 6 (high quality)
+        let validResults = parsed.results
+          .filter(r => {
+            // Basic validation: must have a ref (string) and a numeric relevanceScore
+            if (!r.ref || typeof r.ref !== 'string') return false;
+            if (!Number.isFinite(r.relevanceScore)) return false;
+            if (!r.reason || typeof r.reason !== 'string') return false;
+            
+            // First pass: only accept high-quality results (score >= 6)
+            if (r.relevanceScore < 6) return false;
+
+            // CRITICAL: Validate the ref exists in our provided data
+            const tabData = refToTab.get(r.ref);
+            if (!tabData) {
+              console.warn(`[AI-VALIDATION] Ref ${r.ref} REJECTED - ref not found in tab list`);
+              return false;
+            }
+
+            // CRITICAL: Validate that the reason contains text from the ACTUAL tab
+            const reasonLower = r.reason.toLowerCase();
+            const titleLower = (tabData.title || '').toLowerCase();
+            const summaryLower = (tabData.summary || '').toLowerCase();
+            const urlLower = (tabData.url || '').toLowerCase();
+            const tagsLower = (tabData.tags || []).map(t => t.toLowerCase()).join(' ');
+
+            // Extract quoted text from reason (text between single quotes that AI claimed to find)
+            const quotedTexts = r.reason.match(/'([^']+)'/g) || [];
+
+            if (quotedTexts.length > 0) {
+              let foundMatch = false;
+
+              // Check if quoted text matches THIS tab (by ref)
+              for (const quoted of quotedTexts) {
+                const cleanQuoted = quoted.replace(/'/g, '').toLowerCase().trim();
+                if (cleanQuoted.length < 5) continue; // Skip very short quoted text
+
+                const matchesThisTab = titleLower.includes(cleanQuoted) ||
+                                      summaryLower.includes(cleanQuoted) ||
+                                      urlLower.includes(cleanQuoted) ||
+                                      tagsLower.includes(cleanQuoted);
+
+                if (matchesThisTab) {
+                  foundMatch = true;
+                  break;
+                }
+              }
+
+              if (!foundMatch) {
+                const claimedId = refToId.get(r.ref);
+                console.error(`[AI-VALIDATION] ❌ Ref ${r.ref} (ID=${claimedId}) REJECTED - quoted text doesn't match this tab`);
+                console.error(`[AI-VALIDATION] AI claimed ref: ${r.ref}, Title="${tabData.title}"`);
+                console.error(`[AI-VALIDATION] AI reason: "${r.reason}"`);
+                console.error(`[AI-VALIDATION] Quoted texts: ${quotedTexts.join(', ')}`);
+                return false; // Exclude - quoted text doesn't match this tab
+              }
+            }
+
+            // CRITICAL: Detect uncertainty/hedging in AI's reason
+            // If AI is uncertain, it shouldn't return the result at all
+            const uncertaintyPhrases = [
+              'but context is',
+              'however',
+              'but it',
+              'although',
+              'not directly',
+              'not exactly',
+              'might be',
+              'could be',
+              'possibly',
+              'perhaps',
+              'may be related',
+              'somewhat related',
+              'loosely related',
+              'tangentially',
+              'indirectly',
+              'not quite',
+              'not really',
+              'unclear',
+              'unsure',
+              'uncertain'
+            ];
+            
+            const hasUncertainty = uncertaintyPhrases.some(phrase => reasonLower.includes(phrase));
+            if (hasUncertainty) {
+              const claimedId = refToId.get(r.ref);
+              console.warn(`[AI-VALIDATION] Ref ${r.ref} (ID=${claimedId}) REJECTED - AI expressed uncertainty in reason`);
+              console.warn(`[AI-VALIDATION] AI reason: ${r.reason}`);
+              return false; // Exclude - AI is uncertain about this match
+            }
+
+            // CRITICAL: Validate that the reason addresses the query
+            // Allow semantic matches: if AI provided a detailed explanation, trust it
+            // Count how many keywords are explicitly mentioned in the reason
+            const foundKeywords = queryKeywords.filter(keyword => {
+              const keywordLower = keyword.toLowerCase();
+              return reasonLower.includes(keywordLower);
+            });
+            
+            const keywordMatchRatio = queryKeywords.length > 0 ? foundKeywords.length / queryKeywords.length : 1;
+            
+            // Reject only if:
+            // - Less than 40% of keywords are mentioned AND
+            // - Reason is short (not a detailed semantic explanation)
+            // This allows semantic matches like "ice-cream" for "food" while filtering out irrelevant results
+            if (keywordMatchRatio < 0.4 && r.reason.length < 50) {
+              const claimedId = refToId.get(r.ref);
+              const missingKeywords = queryKeywords.filter(k => !foundKeywords.includes(k));
+              console.warn(`[AI-VALIDATION] Ref ${r.ref} (ID=${claimedId}) REJECTED - insufficient keyword coverage (${Math.round(keywordMatchRatio * 100)}%). Missing: ${missingKeywords.join(', ')}`);
+              console.warn(`[AI-VALIDATION] Query keywords: ${queryKeywords.join(', ')}`);
+              console.warn(`[AI-VALIDATION] AI reason: ${r.reason}`);
+              return false; // Exclude this result - reason doesn't adequately explain the match
+            }
+
+            return true;
+          })
           .sort((a, b) => b.relevanceScore - a.relevanceScore); // Re-sort just in case AI didn't
-          
-        // Store reasons and scores indexed by tab ID
-        const tabReasons = {}; // Store reasons indexed by tab ID
-        const tabScores = {}; // Store scores indexed by tab ID
+
+        // If no high-quality results found, try again with lower threshold (score >= 4)
+        if (validResults.length === 0) {
+          console.log('[AI-VALIDATION] No results with score >= 6, lowering threshold to >= 4');
+          validResults = parsed.results
+            .filter(r => {
+              // Basic validation
+              if (!r.ref || typeof r.ref !== 'string') return false;
+              if (!Number.isFinite(r.relevanceScore)) return false;
+              if (!r.reason || typeof r.reason !== 'string') return false;
+              
+              // Second pass: accept lower scores (4-5)
+              if (r.relevanceScore < 4) return false;
+
+              const tabData = refToTab.get(r.ref);
+              if (!tabData) return false;
+
+              const reasonLower = r.reason.toLowerCase();
+              const titleLower = (tabData.title || '').toLowerCase();
+              const summaryLower = (tabData.summary || '').toLowerCase();
+              const urlLower = (tabData.url || '').toLowerCase();
+              const tagsLower = (tabData.tags || []).map(t => t.toLowerCase()).join(' ');
+
+              const quotedTexts = r.reason.match(/'([^']+)'/g) || [];
+
+              if (quotedTexts.length > 0) {
+                let foundMatch = false;
+                for (const quoted of quotedTexts) {
+                  const cleanQuoted = quoted.replace(/'/g, '').toLowerCase().trim();
+                  if (cleanQuoted.length < 5) continue;
+
+                  const matchesThisTab = titleLower.includes(cleanQuoted) ||
+                                        summaryLower.includes(cleanQuoted) ||
+                                        urlLower.includes(cleanQuoted) ||
+                                        tagsLower.includes(cleanQuoted);
+
+                  if (matchesThisTab) {
+                    foundMatch = true;
+                    break;
+                  }
+                }
+
+                if (!foundMatch) {
+                  return false;
+                }
+              }
+
+              const uncertaintyPhrases = [
+                'but context is', 'however', 'but it', 'although',
+                'not directly', 'not exactly', 'might be', 'could be',
+                'possibly', 'perhaps', 'may be related', 'somewhat related',
+                'loosely related', 'tangentially', 'indirectly',
+                'not quite', 'not really', 'unclear', 'unsure', 'uncertain'
+              ];
+              
+              if (uncertaintyPhrases.some(phrase => reasonLower.includes(phrase))) {
+                return false;
+              }
+
+              const foundKeywords = queryKeywords.filter(keyword => {
+                return reasonLower.includes(keyword.toLowerCase());
+              });
+              
+              const keywordMatchRatio = queryKeywords.length > 0 ? foundKeywords.length / queryKeywords.length : 1;
+              
+              // For lower scores, be more lenient (30% threshold instead of 40%)
+              if (keywordMatchRatio < 0.3 && r.reason.length < 50) {
+                return false;
+              }
+
+              return true;
+            })
+            .sort((a, b) => b.relevanceScore - a.relevanceScore);
+        }
+
+        // Store reasons and scores indexed by REAL tab ID (mapped from ref)
+        const tabReasons = {};
+        const tabScores = {};
         const finalIds = validResults.map(r => {
-          const tabId = r.id;
+          const tabId = refToId.get(r.ref);
           tabReasons[tabId] = r.reason;
           tabScores[tabId] = r.relevanceScore;
           return tabId;
@@ -2435,6 +2770,8 @@ Respond with valid JSON only (escape any quotes with \\): {"summary": "one sente
           ...availabilityOptions, 
           signal: controller.signal, 
           systemPrompt: systemPrompt,
+          temperature: 0.0,  // Lower = more deterministic, less creative (range: 0.0-1.0)
+          topK: 1,           // Only consider the top 1 token = most predictable output
           monitor(m) { 
             m.addEventListener('downloadprogress', (e) => { 
               const pct = Math.round((e.loaded || 0) * 100); 
