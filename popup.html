@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Tab Navigator</title>
+  <style>
+    :root {
+      --bg: #f9f9f9;
+      --fg: #202124;
+      --muted: #5f6368;
+      --primary: #1a73e8;
+      --primary-hover: #185abc;
+      --elev: #ffffff;
+      --divider: #e0e0e0;
+      --row-odd: #f1f3f4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #202124;
+        --fg: #e8eaed;
+        --muted: #bdc1c6;
+        --primary: #8ab4f8;
+        --primary-hover: #669df6;
+        --elev: #2b2c2f;
+        --divider: #3c4043;
+        --row-odd: #2b2c2f;
+      }
+    }
+
+    body {
+      width: 320px;
+      max-height: 600px;
+      overflow-y: auto;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 24px 16px 0 16px;
+      margin: 0;
+      background-color: var(--bg);
+      color: var(--fg);
+    }
+    .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .topbar-icon {
+      width: 24px;
+      height: 24px;
+      background-image: url('icon128.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    
+    h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--fg); }
+    
+    /* AI Status Indicator */
+    .ai-status-indicator {
+      display: flex;
+      align-items: center;
+      margin-left: 8px;
+      height: 16px;
+    }
+    .ai-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #9e9e9e;
+      transition: background-color 0.3s ease;
+    }
+    .ai-status-indicator.unavailable .ai-status-dot {
+      background-color: #ef5350;
+    }
+    .ai-status-indicator.available .ai-status-dot {
+      background-color: #ff9800;
+    }
+    .ai-status-indicator.active .ai-status-dot {
+      background-color: #4caf50;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    #endButton { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 4px 6px; }
+    #endButton:hover { color: var(--primary); }
+
+    #queryInput { 
+      width: 100%; 
+      padding: 12px 44px 12px 12px; 
+      box-sizing: border-box; 
+      border: 1px solid var(--divider); 
+      background: var(--elev); 
+      color: var(--fg); 
+      border-radius: 8px; 
+      font-size: 14px; 
+      margin-bottom: 8px;
+      font-family: inherit;
+      line-height: 1.4;
+      transition: opacity 0.2s ease, background 0.2s ease;
+    }
+    
+    #queryInput:disabled {
+      opacity: 0.5;
+      background: var(--row-odd);
+      cursor: not-allowed;
+    }
+
+    .search-container {
+      position: relative;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-icon {
+      position: absolute;
+      right: 6px;
+      top: 6px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      opacity: 0.4;
+    }
+
+    .search-icon:hover:not(:disabled) {
+      color: var(--primary);
+      background: var(--row-odd);
+      opacity: 1;
+    }
+
+    .search-icon:disabled {
+      cursor: not-allowed;
+      opacity: 0.3;
+    }
+
+    .search-icon.has-text {
+      color: var(--primary);
+      opacity: 1;
+    }
+
+    .search-icon.has-text:hover {
+      background: var(--row-odd);
+    }
+
+    /* Shimmer animation for search state */
+    @keyframes shimmer {
+      0% {
+        opacity: 0.6;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.05);
+      }
+      100% {
+        opacity: 0.6;
+        transform: scale(1);
+      }
+    }
+
+    .search-icon.searching {
+      color: var(--primary);
+      animation: shimmer 1.5s ease-in-out infinite;
+      cursor: not-allowed;
+    }
+
+    .search-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+
+    /* History chips */
+    .historyBar { 
+      display: flex; 
+      flex-wrap: wrap; 
+      gap: 6px; 
+      margin: 0 0 8px 0; 
+      min-height: 0; 
+    }
+    .historyBar:not(:empty) {
+      margin-bottom: 12px;
+    }
+    .history-chip { 
+      background: var(--bg); 
+      color: var(--muted); 
+      border: 1px solid var(--divider); 
+      padding: 4px 8px 4px 12px; 
+      border-radius: 12px; 
+      font-size: 11px; 
+      white-space: nowrap; 
+      cursor: pointer; 
+      transition: all 0.2s ease;
+      line-height: 1.2;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .history-chip:hover { 
+      background: var(--elev); 
+      color: var(--fg); 
+      border-color: var(--primary); 
+    }
+    .history-chip.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .history-chip-text {
+      pointer-events: none;
+    }
+    .history-chip-remove {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      width: 14px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+    .history-chip-remove:hover {
+      background: var(--divider);
+      color: var(--fg);
+    }
+
+    #status { margin: 4px 0 8px 0; font-size: 12px; min-height: 0; line-height: 1.4; color: var(--muted); }
+    #status:not(:empty) { min-height: 16px; }
+    
+    /* Shimmer animation for status text during search */
+    #status.searching {
+      color: var(--primary);
+      animation: statusShimmer 2s ease-in-out infinite;
+    }
+
+    @keyframes statusShimmer {
+      0%, 100% {
+        opacity: 0.7;
+      }
+      50% {
+        opacity: 1;
+      }
+    }
+
+    .error { color: #d93025; font-weight: 500; }
+    .success { color: #1e8e3e; font-weight: 500; }
+
+    /* Status bar with optional button */
+    .status-bar { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin: 4px 0 8px 0; 
+      min-height: 0; 
+    }
+    .status-bar:has(#status:not(:empty)), .status-bar:has(#closeAllSummariesBtn:not([style*="display: none"])) {
+      min-height: 16px;
+      margin-bottom: 12px;
+    }
+    #closeAllSummariesBtn { 
+      background: none; 
+      border: 1px solid var(--divider); 
+      color: var(--muted); 
+      font-size: 11px; 
+      padding: 2px 6px; 
+      border-radius: 4px; 
+      cursor: pointer; 
+      transition: all 0.2s ease;
+      display: none;
+    }
+    #closeAllSummariesBtn:hover { 
+      background: var(--row-odd); 
+      color: var(--fg); 
+    }
+
+    ul { 
+      list-style: none; 
+      padding: 0; 
+      margin: 0 -10px 0 -10px; 
+      border-top: 1px solid var(--divider); 
+      background: var(--elev); 
+    }
+    li { padding: 8px; position: relative; }
+    li:nth-child(odd) { background: var(--row-odd); }
+    li:nth-child(even) { background: var(--elev); }
+    li a { text-decoration: none; color: inherit; display: block; padding-right: 30px; }
+    .title { margin: 0 0 2px 0; font-size: 13px; font-weight: 600; }
+    .meta-row { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+    .meta { 
+      margin: 0; 
+      font-size: 12px; 
+      color: var(--muted); 
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    
+    /* Result type badges as simple tags */
+    .result-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+      font-size: 11px;
+    }
+    .tag-badge {
+      display: inline;
+      font-weight: 400;
+    }
+    .tag-badge.ai {
+      color: #5b8fc8;
+    }
+    .tag-badge.keyword {
+      color: #5b8fc8;
+    }
+    .tag-badge.tab-tag {
+      color: #7a7a7a;
+    }
+    @media (prefers-color-scheme: dark) {
+      .tag-badge.ai {
+        color: #7ba3d1;
+      }
+      .tag-badge.keyword {
+        color: #7ba3d1;
+      }
+      .tag-badge.tab-tag {
+        color: #9a9a9a;
+      }
+    }
+
+    /* Three dot menu */
+    .tab-menu { 
+      position: absolute; 
+      top: 8px; 
+      right: 8px; 
+      background: none; 
+      border: none; 
+      color: var(--muted); 
+      cursor: pointer; 
+      font-size: 16px; 
+      line-height: 1; 
+      width: 20px; 
+      height: 20px; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+    .tab-menu:hover { 
+      background: var(--divider); 
+      color: var(--fg); 
+    }
+    .dropdown-menu { 
+      position: absolute; 
+      top: 100%; 
+      right: 0; 
+      background: var(--elev); 
+      border: 1px solid var(--divider); 
+      border-radius: 6px; 
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+      z-index: 1000; 
+      min-width: 120px; 
+      display: none; 
+    }
+    .dropdown-menu.show { display: block; }
+    .dropdown-item { 
+      display: block; 
+      width: 100%; 
+      padding: 8px 12px; 
+      border: none; 
+      background: none; 
+      color: var(--fg); 
+      text-align: left; 
+      cursor: pointer; 
+      font-size: 12px; 
+      border-radius: 0; 
+    }
+    .dropdown-item:hover { 
+      background: var(--row-odd); 
+    }
+    .dropdown-item.danger { 
+      color: #d93025; 
+    }
+    .dropdown-item.danger:hover { 
+      background: #fce8e6; 
+      color: #d93025; 
+    }
+    @media (prefers-color-scheme: dark) {
+      .dropdown-item.danger:hover { 
+        background: #442726; 
+      }
+    }
+
+    /* Summary section */
+    .summary-section {
+      margin-top: 8px;
+      padding: 8px;
+      background: var(--row-odd);
+      border-radius: 6px;
+      border: 1px solid var(--divider);
+      animation: expandSummary 0.2s ease-out;
+    }
+    
+    /* Reason section uses same styles as summary */
+    .reason-section {
+      margin-top: 8px;
+      padding: 8px;
+      background: var(--row-odd);
+      border-radius: 6px;
+      border: 1px solid var(--divider);
+      animation: expandSummary 0.2s ease-out;
+    }
+    
+    @keyframes expandSummary {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .summary-header, .reason-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .summary-title, .reason-title {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--primary);
+    }
+    .close-summary, .close-reason {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+    .close-summary:hover, .close-reason:hover {
+      background: var(--divider);
+      color: var(--fg);
+    }
+    .summary-content, .reason-content {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--fg);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .summary-content.loading, .reason-content.loading {
+      color: var(--muted);
+      font-style: italic;
+    }
+    .summary-content.error, .reason-content.error {
+      color: #d93025;
+    }
+
+    .bottombar { 
+      position: sticky; 
+      bottom: 0; 
+      background: var(--bg); 
+      border-top: 1px solid var(--divider); 
+      padding: 8px 0 10px 0; 
+      display: flex; 
+      align-items: center;
+      justify-content: space-between; 
+      margin: 0 -16px 0 -16px; 
+      padding-left: 16px; 
+      padding-right: 16px; 
+    }
+    #groupButton { background: none; border: none; color: var(--primary); font-size: 13px; cursor: pointer; padding: 6px 8px; transition: all 0.2s ease; }
+    #groupButton:hover:not(:disabled) { background: var(--primary); color: #fff; border-radius: 4px; }
+    #groupButton:disabled { color: #9e9e9e; cursor: default; opacity: 0.6; }
+    #backgroundStatus { text-align: left; font-size: 12px; color: var(--muted); }
+    #searchStatus { text-align: left; font-size: 13px; color: var(--text-secondary); }
+    #searchStatus.searching {
+      color: var(--primary);
+      animation: statusShimmer 2s ease-in-out infinite;
+    }
+
+    /* Onboarding Overlay */
+    .onboarding-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .onboarding-content {
+      background: transparent;
+      border-radius: 0;
+      padding: 0;
+      width: 100%;
+      text-align: center;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+      min-height: 520px;
+    }
+
+    .onboarding-content h2 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      color: var(--fg);
+    }
+
+    .onboarding-content p {
+      margin: 0 0 16px 0;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+
+    .onboarding-steps {
+      text-align: left;
+      margin: 12px 0 16px 0;
+      background: var(--elev);
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid var(--divider);
+      flex-shrink: 0;
+    }
+
+    .onboarding-steps ol {
+      margin: 0;
+      padding-left: 16px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--fg);
+    }
+
+    .onboarding-steps li {
+      margin-bottom: 6px;
+    }
+
+    .onboarding-main-content {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .onboarding-logo {
+      width: 84px;
+      height: 84px;
+      margin: 0 auto 16px auto;
+      background-image: url('icon128.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      border-radius: 63% 37% 54% 46% / 55% 48% 52% 45%;
+      animation: morphShape 6s ease-in-out infinite;
+    }
+
+    @keyframes morphShape {
+      0%, 100% {
+        border-radius: 63% 37% 54% 46% / 55% 48% 52% 45%;
+      }
+      25% {
+        border-radius: 40% 60% 30% 70% / 50% 60% 40% 50%;
+      }
+      50% {
+        border-radius: 50% 50% 20% 80% / 25% 75% 25% 75%;
+      }
+      75% {
+        border-radius: 70% 30% 60% 40% / 45% 30% 70% 55%;
+      }
+    }
+
+    .onboarding-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 0;
+      padding-bottom: 16px;
+      flex-shrink: 0;
+    }
+
+    .onboarding-btn {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+      flex: 1;
+      max-width: 110px;
+    }
+
+    .onboarding-btn.primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .onboarding-btn.primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .onboarding-btn.secondary {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--divider);
+    }
+
+    .onboarding-btn.secondary:hover {
+      background: var(--divider);
+    }
+
+    /* AI Status Notice */
+    .ai-status-notice {
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      color: #856404;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .ai-status-notice.warning {
+      background: #f8d7da;
+      border-color: #f5c6cb;
+      color: #721c24;
+    }
+
+    .ai-status-notice.checking {
+      background: #d1ecf1;
+      border-color: #bee5eb;
+      color: #0c5460;
+    }
+
+    .ai-status-notice a {
+      color: inherit;
+      font-weight: 500;
+      text-decoration: none;
+    }
+
+    .ai-status-notice a:hover {
+      text-decoration: underline;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .ai-status-notice {
+        background: #3d3b00;
+        border-color: #5d5a00;
+        color: #fff3a0;
+      }
+
+      .ai-status-notice.warning {
+        background: #5c1e1e;
+        border-color: #7d2b2b;
+        color: #ffb3ba;
+      }
+
+      .ai-status-notice.checking {
+        background: #1a4a54;
+        border-color: #2a5a64;
+        color: #a3d5e0;
+      }
+
+      .onboarding-content {
+        border: 1px solid var(--divider);
+      }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+    
+    /* Toggle Switch Styles */
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 24px 0 16px 0;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--divider);
+      transition: 0.3s;
+      border-radius: 22px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+      background-color: var(--primary);
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+    
+    .toggle-label {
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Onboarding Overlay -->
+  <div id="onboardingOverlay" class="onboarding-overlay hidden">
+    <div class="onboarding-content">
+      <div class="onboarding-main-content">
+        <div class="onboarding-logo"></div>
+        <h2>🚀 Welcome to AI Tab Navigator!</h2>
+        <p>Enable Chrome's AI features for the best experience.</p>
+        
+        <div class="onboarding-steps">
+          <ol>
+            <li>Go to <strong>chrome://flags</strong></li>
+            <li><strong>"Prompt API for Gemini Nano"</strong> → <strong>Enabled</strong></li>
+            <li><strong>"Summarization API for Gemini Nano"</strong> → <strong>Enabled</strong></li>
+            <li><strong>"Optimization Guide On Device"</strong> → <strong>Enabled BypassPerfRequirement</strong></li>
+            <li>Restart Chrome</li>
+          </ol>
+        </div>
+        
+        <p style="font-size: 11px; color: var(--muted); margin-bottom: 24px;">⚠️ Without AI: basic text search only.</p>
+      </div>
+      
+      <div class="onboarding-buttons">
+        <button class="onboarding-btn secondary" id="skipOnboarding">Skip</button>
+        <button class="onboarding-btn primary" id="completeOnboarding">Got it!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Status Notice -->
+  <div id="aiStatusNotice" class="ai-status-notice hidden">
+    <strong>⚠️ Fallback Mode:</strong> AI features unavailable. Using basic search. 
+    <a href="#" id="showSetupAgain">Enable AI features</a> for better results.
+  </div>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-icon"></div>
+      <h3>AI Tab Navigator</h3>
+      <div id="aiStatusIndicator" class="ai-status-indicator" title="AI Status">
+        <span class="ai-status-dot"></span>
+      </div>
+    </div>
+    <button id="endButton" title="Clear current search" style="display: none;">Clear Search</button>
+  </div>
+
+  <!-- Search helper text (moved above search box) -->
+  <div style="margin: 0 0 8px 0; font-size: 10px; color: var(--muted); font-style: italic;">
+    💡 Tip: Use hashtags like <code>#javascript, #tutorial</code> for instant tag search
+  </div>
+
+  <div class="search-container">
+    <input type="text" id="queryInput" placeholder="Search for a tab..." autofocus>
+    <button type="button" class="search-icon" id="searchButton" aria-label="Search tabs" title="Search tabs">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+  
+  <!-- History chips -->
+  <div class="historyBar" aria-label="Search history" id="historyContainer">
+    <!-- History chips will be populated here -->
+  </div>
+  
+  <!-- Aggressive keyword search toggle -->
+  <div class="toggle-container">
+    <label class="toggle-switch">
+      <input type="checkbox" id="aggressiveSearchToggle">
+      <span class="toggle-slider"></span>
+    </label>
+    <label for="aggressiveSearchToggle" class="toggle-label">
+      Aggressive keyword search (searches full page text, disables AI)
+    </label>
+  </div>
+
+  <div class="status-bar">
+    <div id="status"></div>
+    <button id="closeAllSummariesBtn" title="Close all open summaries">Close All</button>
+  </div>
+
+  <template id="li_template">
+    <li>
+      <a>
+        <h4 class="title">Tab Title</h4>
+        <div class="meta-row">
+          <p class="meta">example.com/path</p>
+        </div>
+        <div class="result-badge" style="display: none;"></div>
+      </a>
+      <button class="tab-menu" title="More options">⋯</button>
+      <div class="dropdown-menu">
+        <button class="dropdown-item view-reason">Why Selected?</button>
+        <button class="dropdown-item view-summary">View Summary</button>
+        <button class="dropdown-item danger">Close Tab</button>
+      </div>
+      <div class="reason-section" style="display: none;">
+        <div class="reason-header">
+          <span class="reason-title">Why This Tab Was Selected</span>
+          <button class="close-reason" title="Close">×</button>
+        </div>
+        <div class="reason-content"></div>
+      </div>
+      <div class="summary-section" style="display: none;">
+        <div class="summary-header">
+          <span class="summary-title">Summary</span>
+          <button class="close-summary" title="Close summary">×</button>
+        </div>
+        <div class="summary-content"></div>
+      </div>
+    </li>
+  </template>
+
+  <ul id="results"></ul>
+
+  <div id="showMoreContainer" style="display: none; text-align: center; padding: 12px 0; border-top: 1px solid var(--divider);">
+    <button id="showMoreButton" style="background: none; border: 1px solid var(--primary); color: var(--primary); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; transition: all 0.2s ease;">Show More</button>
+  </div>
+
+  <div class="bottombar">
+    <div style="flex: 1;">
+      <div id="backgroundStatus"></div>
+      <div id="searchStatus"></div>
+    </div>
+    <button id="groupButton" title="Group the current matches" disabled>Group</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
